@@ -49,7 +49,7 @@ while True:
             print(f"pen: {pen}")
 
     if pen:
-        pygame.draw.circle(bg, (0, 0, 0), (x, y), 5, 0) #畫線
+        pygame.draw.circle(bg, (0, 0, 0), (x, y), 300, 0) #畫線
     
 
     screen.blit(bg, (0, 0))#繪製畫布
