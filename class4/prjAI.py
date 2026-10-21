@@ -22,6 +22,7 @@ class Brick:
         self.max_hits = hits_left
         self.moving = moving
         self.move_direction = random.choice([-1, 1])
+        self.move_direction_y = random.choice([-1, 1])
 
     def draw(self, display_area):
         """
@@ -33,7 +34,7 @@ class Brick:
             center_x = self.rect.centerx
             center_y = self.rect.centery
 
-            if self.moving:
+            if self.moving and self.brick_type != "goal":
                 pygame.draw.line(display_area, (255, 255, 255), (center_x - 10, center_y), (center_x + 10, center_y), 2)
                 pygame.draw.polygon(
                     display_area,
@@ -45,7 +46,7 @@ class Brick:
                     (255, 255, 255),
                     [(center_x + 10, center_y), (center_x + 5, center_y - 4), (center_x + 5, center_y + 4)],
                 )
-            if self.hits_left > 1:
+            if self.hits_left > 1 and self.brick_type != "goal":
                 pygame.draw.rect(display_area, (255, 255, 255), self.rect, 2)
 
             if self.brick_type == "explosive":
@@ -65,6 +66,15 @@ class Brick:
                     (255, 255, 255),
                     [(center_x + 5, center_y - 5), (center_x + 5, center_y), (center_x, center_y - 5)],
                 )
+            elif self.brick_type == "goal":
+                pygame.draw.rect(display_area, (255, 255, 255), self.rect, 2)
+                pygame.draw.polygon(
+                    display_area,
+                    (95, 45, 145),
+                    [(center_x, center_y - 5), (center_x + 5, center_y), (center_x, center_y + 5), (center_x - 5, center_y)],
+                )
+                for index in range(self.hits_left):
+                    pygame.draw.circle(display_area, (255, 255, 255), (center_x - 18 + index * 4, center_y + 6), 1)
 
 class Ball:
     def __init__(self, x, y, radius, color):
@@ -103,7 +113,16 @@ class Ball:
             self.x += self.speed_x
             self.y += self.speed_y
 
-    def check_collision(self, bg_x, bg_y, bricks, pad, piercing=False, invincible=False):
+    def check_collision(
+        self,
+        bg_x,
+        bg_y,
+        bricks,
+        pad,
+        piercing=False,
+        invincible=False,
+        moving_platform=None,
+    ):
         """
         檢查球物件與磚塊物件是否有碰撞/check collision between ball and brick
         bg_x, bg_y: 背景的寬度/width of background
@@ -131,6 +150,32 @@ class Ball:
             and self.x <= pad.rect.x + pad.rect.width
         ):
             self.speed_y = -abs(self.speed_y)
+
+        if moving_platform is not None:
+            platform = moving_platform.rect
+            left = platform.left - self.radius
+            right = platform.right + self.radius
+            top = platform.top - self.radius
+            bottom = platform.bottom + self.radius
+            if left <= self.x <= right and top <= self.y <= bottom:
+                if self.previous_y + self.radius <= platform.top and self.speed_y > 0:
+                    self.y = top
+                    self.speed_y = -abs(self.speed_y)
+                elif self.previous_y - self.radius >= platform.bottom and self.speed_y < 0:
+                    self.y = bottom
+                    self.speed_y = abs(self.speed_y)
+                elif self.previous_x + self.radius <= platform.left and self.speed_x > 0:
+                    self.x = left
+                    self.speed_x = -abs(self.speed_x)
+                elif self.previous_x - self.radius >= platform.right and self.speed_x < 0:
+                    self.x = right
+                    self.speed_x = abs(self.speed_x)
+                elif self.speed_y > 0:
+                    self.y = top
+                    self.speed_y = -abs(self.speed_y)
+                else:
+                    self.y = bottom
+                    self.speed_y = abs(self.speed_y)
 
         if self.last_brick is not None:
             dx = abs(self.x - self.last_brick.rect.centerx)
@@ -241,10 +286,6 @@ ball_color_button = pygame.Rect(8 + (button_width + button_gap) * 5, button_y, b
 shop_button = pygame.Rect(8 + (button_width + button_gap) * 6, button_y, button_width, button_height)
 shop_panel = pygame.Rect(140, 70, 520, 500)
 shop_close_button = pygame.Rect(shop_panel.right - 42, shop_panel.y + 12, 30, 30)
-shop_buy_buttons = [
-    pygame.Rect(shop_panel.x + 370, shop_panel.y + 115 + index * 46, 120, 34)
-    for index in range(8)
-]
 ball_colors = [
     (255, 215, 0),
     (100, 220, 255),
@@ -261,20 +302,16 @@ shop_items = [
     ("piercing", "穿透"),
     ("wide_paddle", "底板加寬"),
     ("invincible", "護盾"),
-    ("life", "生命值 +1"),
-    ("level", "直接通關"),
-    ("ball_color", "球的顏色"),
-    ("aiming", "拖曳瞄準"),
+]
+shop_buy_buttons = [
+    pygame.Rect(shop_panel.x + 370, shop_panel.y + 115 + index * 46, 120, 34)
+    for index in range(len(shop_items))
 ]
 shop_item_prices = {
     "big_ball": 500,
     "piercing": 500,
     "wide_paddle": 500,
     "invincible": 500,
-    "life": 100,
-    "level": 500,
-    "ball_color": 50,
-    "aiming": 50,
 }
 
 
@@ -307,6 +344,7 @@ brick_colors = {
     "add_bricks": (80, 220, 100),
     "extra_ball": (80, 160, 255),
     "restore": (180, 100, 230),
+    "goal": (255, 195, 40),
 }
 
 
@@ -347,6 +385,21 @@ def create_bricks(level):
 
     for x, y in positions:
         level_bricks.append(create_brick(x, y))
+
+    empty_positions = [position for position in grid_positions if position not in positions]
+    goal_x, goal_y = random.choice(empty_positions)
+    level_bricks.append(
+        Brick(
+            goal_x,
+            goal_y,
+            brick_w,
+            brick_h,
+            brick_colors["goal"],
+            brick_type="goal",
+            hits_left=10,
+            moving=True,
+        )
+    )
 
     return level_bricks
 
@@ -413,6 +466,17 @@ pad_width = 90
 pad_height = 20
 wide_pad_width = 140
 pad = Brick(0, bg_y - 48, pad_width, pad_height, (255, 255, 255))
+moving_platform_width = 130
+moving_platform_height = 12
+moving_platform = Brick(
+    (bg_x - moving_platform_width) // 2,
+    pad.rect.bottom + 6,
+    moving_platform_width,
+    moving_platform_height,
+    (70, 220, 255),
+    brick_type="platform",
+    moving=True,
+)
 ######################球設定/ ball settings######################
 ball_radius = 10
 ball_color = (255, 215, 0)
@@ -498,6 +562,36 @@ def advance_level(current_time):
     level_clear_end_time = current_time + 2500
 
 
+def launch_balls(direction_x, direction_y, ball_speed):
+    stationary_balls = [current_ball for current_ball in balls if not current_ball.is_moving]
+    if not stationary_balls:
+        return
+
+    launch_count = min(
+        random.randint(5, 10),
+        len(stationary_balls) + max_balls - len(balls),
+    )
+    if launch_count <= 0:
+        return
+
+    template_ball = stationary_balls[0]
+    while len(stationary_balls) < launch_count:
+        new_ball = Ball(template_ball.x, template_ball.y, template_ball.radius, template_ball.color)
+        balls.append(new_ball)
+        stationary_balls.append(new_ball)
+
+    base_angle = math.atan2(direction_y, direction_x)
+    spread = math.radians(20)
+    for index, current_ball in enumerate(stationary_balls[:launch_count]):
+        angle_offset = 0 if launch_count == 1 else spread * (
+            2 * index / (launch_count - 1) - 1
+        )
+        angle = base_angle + angle_offset
+        current_ball.speed_x = math.cos(angle) * ball_speed
+        current_ball.speed_y = math.sin(angle) * ball_speed
+        current_ball.is_moving = True
+
+
 ######################遊戲結束設定/ game over settings######################
 
 ######################主程式/ main program######################
@@ -519,12 +613,13 @@ while True:
             ((80, 220, 100), "增加磚塊", "擊中後會在空位新增一塊普通磚。"),
             ((80, 160, 255), "分身球", "擊中後增加一顆球，同時最多有 10 顆。"),
             ((180, 100, 230), "修復磚塊", "擊中後會復原附近已被打掉的磚塊。"),
+            (brick_colors["goal"], "通關方塊", "金色方塊會隨機移動，擊中10次即可過關。"),
         ]
         guide_y = 178
         for index, (brick_color, label, description) in enumerate(brick_guide):
-            row_y = guide_y + index * 44
-            pygame.draw.rect(screen, (20, 29, 46), (96, row_y, 608, 38), border_radius=6)
-            sample_rect = pygame.Rect(112, row_y + 7, 54, 24)
+            row_y = guide_y + index * 38
+            pygame.draw.rect(screen, (20, 29, 46), (96, row_y, 608, 34), border_radius=6)
+            sample_rect = pygame.Rect(112, row_y + 5, 54, 24)
             pygame.draw.rect(screen, brick_color, sample_rect)
             if index == 0:
                 pygame.draw.rect(screen, (255, 255, 255), sample_rect, 2)
@@ -540,8 +635,17 @@ while True:
             elif index == 4:
                 pygame.draw.circle(screen, (255, 255, 255), sample_rect.center, 6)
                 pygame.draw.circle(screen, brick_color, sample_rect.center, 3)
-            else:
+            elif index == 5:
                 pygame.draw.circle(screen, (255, 255, 255), sample_rect.center, 7, 2)
+            else:
+                pygame.draw.rect(screen, (255, 255, 255), sample_rect, 2)
+                pygame.draw.polygon(
+                    screen,
+                    (95, 45, 145),
+                    [(sample_rect.centerx, sample_rect.centery - 7), (sample_rect.centerx + 7, sample_rect.centery), (sample_rect.centerx, sample_rect.centery + 7), (sample_rect.centerx - 7, sample_rect.centery)],
+                )
+                for pip in range(10):
+                    pygame.draw.circle(screen, (255, 255, 255), (sample_rect.centerx - 18 + pip * 4, sample_rect.centery + 8), 1)
             label_text = home_body_font.render(label, True, (245, 248, 255))
             description_text = home_small_font.render(description, True, (185, 198, 218))
             screen.blit(label_text, (184, row_y + 4))
@@ -606,28 +710,10 @@ while True:
                 for index, (power_name, _) in enumerate(shop_items):
                     if shop_buy_buttons[index].collidepoint(mouse_pos):
                         item_price = shop_item_prices[power_name]
-                        if power_name in ("ball_color", "aiming") and power_name in unlocked_features:
-                            shop_message = f"「{shop_items[index][1]}」已解鎖"
-                        elif score >= item_price:
+                        if score >= item_price:
                             score -= item_price
-                            if power_name in power_uses:
-                                power_uses[power_name] += 1
-                                shop_message = f"已購買「{shop_items[index][1]}」使用次數"
-                            elif power_name == "life":
-                                lives += 1
-                                if game_over:
-                                    game_over = False
-                                    ball.is_moving = False
-                                    ball.x = pad.rect.x + pad.rect.width // 2
-                                    ball.y = pad.rect.y - ball.radius
-                                    balls = [ball]
-                                shop_message = "已購買 1 條生命值"
-                            elif power_name == "level":
-                                advance_level(pygame.time.get_ticks())
-                                shop_message = f"已通關，進入第 {level} 關"
-                            elif power_name in ("ball_color", "aiming"):
-                                unlocked_features.add(power_name)
-                                shop_message = f"已解鎖「{shop_items[index][1]}」"
+                            power_uses[power_name] += 1
+                            shop_message = f"已購買「{shop_items[index][1]}」使用次數"
                         else:
                             shop_message = "分數不足，無法購買"
                         break
@@ -680,15 +766,10 @@ while True:
                         paused = True
                         pause_started_at = pygame.time.get_ticks()
             elif ball_color_button.collidepoint(mouse_pos):
-                if "ball_color" in unlocked_features:
-                    ball_color_index = (ball_color_index + 1) % len(ball_colors)
-                    ball_color = ball_colors[ball_color_index]
-                    for current_ball in balls:
-                        current_ball.color = ball_color
-                else:
-                    shop_open = True
-                    shop_opened_at = pygame.time.get_ticks()
-                    shop_message = "球色尚未解鎖，請至商店購買"
+                ball_color_index = (ball_color_index + 1) % len(ball_colors)
+                ball_color = ball_colors[ball_color_index]
+                for current_ball in balls:
+                    current_ball.color = ball_color
             elif not game_over and not paused and big_ball_button.collidepoint(mouse_pos):
                 activate_power("big_ball", pygame.time.get_ticks())
             elif not game_over and not paused and piercing_button.collidepoint(mouse_pos):
@@ -704,11 +785,8 @@ while True:
                         aim_start_pos = mouse_pos
                         aim_current_pos = mouse_pos
                     else:
-                        for current_ball in balls:
-                            if not current_ball.is_moving:
-                                current_ball.speed_x = random.choice((-5, 5))
-                                current_ball.speed_y = -5
-                                current_ball.is_moving = True
+                        direction_x = random.choice((-5, 5))
+                        launch_balls(direction_x, -5, math.hypot(5, 5))
         elif event.type == pygame.MOUSEMOTION:
             keyboard_controls_paddle = False
             if is_aiming and "aiming" in unlocked_features:
@@ -720,13 +798,8 @@ while True:
             direction_y = aim_dy
             if direction_x == 0 and direction_y == 0:
                 direction_y = -1
-            direction_length = math.hypot(direction_x, direction_y)
             ball_speed = math.hypot(5, 5)
-            for current_ball in balls:
-                if not current_ball.is_moving:
-                    current_ball.speed_x = direction_x / direction_length * ball_speed
-                    current_ball.speed_y = direction_y / direction_length * ball_speed
-                    current_ball.is_moving = True
+            launch_balls(direction_x, direction_y, ball_speed)
             is_aiming = False
             aim_start_pos = None
             aim_current_pos = None
@@ -736,11 +809,30 @@ while True:
     if not paused and not shop_open and not game_over:
         for brick in bricks:
             if not brick.hit and brick.moving:
-                brick.rect.x += brick.move_direction * 2
-                if brick.rect.left <= 20 or brick.rect.right >= bg_x - 20:
-                    brick.move_direction = -brick.move_direction
+                if brick.brick_type == "goal":
+                    brick.rect.x += brick.move_direction * 2
+                    brick.rect.y += brick.move_direction_y * 2
+                    if random.randint(1, 45) == 1:
+                        brick.move_direction = random.choice([-1, 1])
+                        brick.move_direction_y = random.choice([-1, 1])
+                    if brick.rect.left <= 20 or brick.rect.right >= bg_x - 20:
+                        brick.move_direction = -brick.move_direction
+                    if brick.rect.top <= 100 or brick.rect.bottom >= bg_y * 0.65:
+                        brick.move_direction_y = -brick.move_direction_y
+                else:
+                    brick.rect.x += brick.move_direction * 2
+                    if brick.rect.left <= 20 or brick.rect.right >= bg_x - 20:
+                        brick.move_direction = -brick.move_direction
+
+        moving_platform.rect.x += moving_platform.move_direction * 3
+        if (
+            moving_platform.rect.left <= 20
+            or moving_platform.rect.right >= bg_x - 20
+        ):
+            moving_platform.move_direction = -moving_platform.move_direction
 
     lost_ball = False
+    goal_cleared = False
     for current_ball in balls[:] if not game_over and not paused and not shop_open else []:
         if current_time < big_ball_end_time:
             current_ball.radius = ball_radius * 2
@@ -757,6 +849,7 @@ while True:
                 pad,
                 current_time < piercing_end_time,
                 current_time < invincible_end_time,
+                moving_platform,
             )
             if was_moving and not current_ball.is_moving:
                 lost_ball = True
@@ -767,8 +860,9 @@ while True:
                     for brick in bricks:
                         if (
                             not brick.hit
-                            and abs(brick.rect.centerx - hit_brick.rect.centerx) <= brick_w + bricks_gap
-                            and abs(brick.rect.centery - hit_brick.rect.centery) <= brick_h + bricks_gap
+                            and brick.brick_type != "goal"
+                            and abs(brick.rect.centerx - hit_brick.rect.centerx) <= 2 * (brick_w + bricks_gap)
+                            and abs(brick.rect.centery - hit_brick.rect.centery) <= 2 * (brick_h + bricks_gap)
                         ):
                             brick.hit = True
                             score += 10
@@ -783,6 +877,13 @@ while True:
                         balls.append(new_ball)
                 elif hit_brick.brick_type == "restore":
                     restore_nearby_bricks(bricks, hit_brick)
+                elif hit_brick.brick_type == "goal" and hit_brick.hit:
+                    goal_cleared = True
+                    break
+
+    if goal_cleared:
+        advance_level(pygame.time.get_ticks())
+        lost_ball = False
 
     balls = [current_ball for current_ball in balls if current_ball is ball or current_ball.is_moving]
 
@@ -795,14 +896,24 @@ while True:
         if lives <= 0:
             game_over = True
 
-    remaining_bricks = sum(not brick.hit for brick in bricks)
-    if not paused and not shop_open and not game_over and bricks and remaining_bricks <= 5:
+    remaining_bricks = [brick for brick in bricks if not brick.hit]
+    if (
+        not paused
+        and not shop_open
+        and not game_over
+        and bricks
+        and (
+            not remaining_bricks
+            or all(brick.brick_type == "goal" for brick in remaining_bricks)
+        )
+    ):
         advance_level(pygame.time.get_ticks())
 
     for brick in bricks:
         brick.draw(game_surface)
 
     pad.draw(game_surface)
+    moving_platform.draw(game_surface)
     for current_ball in balls:
         current_ball.draw(game_surface)
 
@@ -858,9 +969,7 @@ while True:
     pause_color = (40, 120, 150) if paused else (70, 70, 100)
     draw_button(game_surface, pause_button, pause_label, pause_color)
 
-    color_unlocked = "ball_color" in unlocked_features
-    color_label = "球色" if color_unlocked else "球色鎖"
-    draw_button(game_surface, ball_color_button, color_label, (70, 100, 120) if color_unlocked else (65, 65, 75))
+    draw_button(game_surface, ball_color_button, "球色", (70, 100, 120))
     pygame.draw.circle(game_surface, ball_color, (ball_color_button.right - 18, ball_color_button.centery), 9)
 
     invincible_active = current_time < invincible_end_time
@@ -896,7 +1005,7 @@ while True:
         game_surface.blit(shop_title, shop_title.get_rect(center=(shop_panel.centerx, shop_panel.y + 42)))
         balance_text = home_body_font.render(f"目前分數：{score}", True, (220, 230, 245))
         game_surface.blit(balance_text, balance_text.get_rect(center=(shop_panel.centerx, shop_panel.y + 78)))
-        price_text = home_small_font.render("技能/通關500分　生命100分　球色/瞄準50分", True, (185, 205, 225))
+        price_text = home_small_font.render("技能500分", True, (185, 205, 225))
         game_surface.blit(price_text, price_text.get_rect(center=(shop_panel.centerx, shop_panel.y + 99)))
         pygame.draw.rect(game_surface, (120, 55, 55), shop_close_button, border_radius=5)
         close_text = home_body_font.render("×", True, (255, 255, 255))
@@ -907,22 +1016,14 @@ while True:
             item_text = home_body_font.render(item_label, True, (245, 248, 255))
             if power_name in power_uses:
                 item_status = f"持有：{power_uses[power_name]} 次"
-            elif power_name == "life":
-                item_status = f"目前：{lives} 條"
-            elif power_name == "level":
-                item_status = f"前往第 {level + 1} 關"
             else:
                 item_status = "已解鎖" if power_name in unlocked_features else "尚未解鎖"
             count_text = home_small_font.render(item_status, True, (185, 205, 225))
             game_surface.blit(item_text, (shop_panel.x + 40, row_y + 3))
             game_surface.blit(count_text, (shop_panel.x + 150, row_y + 9))
             item_price = shop_item_prices[power_name]
-            if power_name in ("ball_color", "aiming") and power_name in unlocked_features:
-                button_label = "已解鎖"
-                button_color = (65, 75, 85)
-            else:
-                button_label = f"購買 {item_price}分"
-                button_color = (45, 115, 85)
+            button_label = f"購買 {item_price}分"
+            button_color = (45, 115, 85)
             draw_button(game_surface, shop_buy_buttons[index], button_label, button_color)
         if shop_message:
             message_text = home_small_font.render(shop_message, True, (255, 190, 115))
